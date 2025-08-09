@@ -1,0 +1,295 @@
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Scooter Grind Escape — Hellride</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      touch-action: none; /* убираем нативный скролл/зум жестами */
+    }
+    #app { width: 100%; height: 100%; position: relative; }
+    canvas { display: block; }
+    .ui-button {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      padding: 12px 20px; font-size: 20px; color: #fff; background: #ff6600;
+      border: none; border-radius: 10px; cursor: pointer; font-weight: 800;
+      box-shadow: 0 6px 18px rgba(0,0,0,.35);
+    }
+    .start-btn { top: 50%; }
+    .restart-btn { bottom: 20%; }
+    .score-display {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      font-size: 22px; font-weight: 800; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.6);
+    }
+  </style>
+</head>
+<body>
+<div id="app" data-v-app="">
+<div style="width: 100%; height: 100%; position: relative;">
+<canvas width="375" height="617"></canvas><!----><!---->
+<div>
+<div class="score-display">
+Ты проехал 483 метров!
+</div>
+<button class="ui-button restart-btn">Играть снова</button>
+</div>
+</div>
+</div>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script>
+/* Scooter Grind Escape — Single HTML (Vue 3 + Canvas)
+   - Прыжок длительнее на ~50% (через JUMP_DURATION)
+   - Присед дольше + авто-продление под верхней перекладиной
+   - Мгновенная реакция жестов (обработка на touchmove, passive:false, preventDefault)
+*/
+const { createApp, ref, onMounted, onBeforeUnmount } = Vue;
+createApp({
+  setup() {
+    const gameState = ref("start"); // start | play | end
+    const score = ref(0);
+    const finalScore = ref(0);
+    const canvas = ref(null);
+    let ctx;
+    // Мир
+    let groundY;
+    let obstacles = [];
+    let speed = 4.2;
+    let speedLevel = 0;
+    let distance = 0;
+    let startTs = 0;
+    let lastTs = 0;
+    let rafId = null;
+    let obstacleTimerId = null;
+    // Игрок
+    const player = {
+      state: "ride",   // 'ride' | 'jump' | 'duck'
+      jumpT: 0,        // 0..1
+      duckUntil: 0     // timestamp ms
+    };
+    // Баланс/константы
+    const JUMP_HEIGHT = 180;        // пикселей
+    const JUMP_DURATION = 1.05;     // секунд — длительность фазы прыжка (~+50%)
+    const DUCK_DURATION_MS = 1000;  // мс — базовая длительность пригиба
+    const SPEED_INCREASE_EVERY_MS = 10000;
+    // Свайпы
+    let touchStartX = 0, touchStartY = 0, touchActive = false, gestureUsed = false;
+    // ===== Жизненный цикл =====
+    const startGame = () => {
+      obstacles = [];
+      clearTimeout(obstacleTimerId);
+      speed = 4.2;
+      speedLevel = 0;
+      distance = 0;
+      score.value = 0;
+      player.state = "ride";
+      player.jumpT = 0;
+      player.duckUntil = 0;
+      startTs = performance.now();
+      lastTs = startTs;
+      gameState.value = "play";
+      spawnObstacle();
+      rafId = requestAnimationFrame(loop);
+    };
+    const endGame = () => {
+      finalScore.value = Math.max(0, Math.floor(distance));
+      gameState.value = "end";
+      cancelAnimationFrame(rafId);
+      clearTimeout(obstacleTimerId);
+    };
+    // ===== Препятствия =====
+    function spawnObstacle() {
+      const types = ["gap", "box", "bar"]; // разрыв / коробка / низкая перекладина
+      const type = types[Math.floor(Math.random()*types.length)];
+      const w = window.innerWidth;
+      const baseGap = 1100;
+      const jitter = 650 + Math.random()*850;
+      const spacing = Math.max(650, baseGap - speed*50 + jitter);
+      const width =
+        type === "gap" ? (60 + Math.random()*35) :
+        type === "box" ? (34 + Math.random()*12) :
+                         (50 + Math.random()*10);
+      obstacles.push({ type, x: w + 60, width });
+      obstacleTimerId = setTimeout(spawnObstacle, spacing);
+    }
+    // ===== Рендер =====
+    const drawBackground = (w, h) => {
+      const g = ctx.createLinearGradient(0,0,0,h);
+      g.addColorStop(0,"#87CEFA"); g.addColorStop(1,"#A0A0A0");
+      ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+      ctx.fillStyle = "#666"; ctx.fillRect(0, groundY - 3, w, 6); // рейл
+    };
+    const drawPlayer = (x, y) => {
+      ctx.save(); ctx.translate(x,y);
+      // дека
+      ctx.fillStyle = "#000"; ctx.fillRect(-40,-5,80,10);
+      ctx.fillStyle = "#ff6600"; ctx.fillRect(-38,-3,76,6);
+      // лого
+      ctx.fillStyle = "#fff"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("HELLRIDE", 0, -10);
+      // колёса
+      ctx.fillStyle = "#555"; ctx.beginPath();
+      ctx.arc(-30,6,6,0,Math.PI*2); ctx.arc(30,6,6,0,Math.PI*2); ctx.fill();
+      // руль
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.beginPath();
+      ctx.moveTo(0,-20); ctx.lineTo(0,-50); ctx.moveTo(-16,-50); ctx.lineTo(16,-50); ctx.stroke();
+      // райдер
+      if (player.state === "duck") {
+        ctx.fillStyle = "#ff6600"; ctx.fillRect(-10,-58,20,18);
+        ctx.fillStyle = "#000"; ctx.fillRect(-14,-40,28,26);
+      } else {
+        ctx.fillStyle = "#ff6600"; ctx.fillRect(-10,-70,20,20);
+        ctx.fillStyle = "#000"; ctx.fillRect(-12,-50,24,30);
+      }
+      ctx.restore();
+    };
+    const drawObstacle = (obs) => {
+      ctx.fillStyle = "#ff6600";
+      if (obs.type === "gap") {
+        ctx.clearRect(obs.x - obs.width/2, groundY - 4, obs.width, 8);
+      } else if (obs.type === "box") {
+        ctx.fillRect(obs.x - obs.width/2, groundY - 25, obs.width, 20);
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+        ctx.strokeRect(obs.x - obs.width/2, groundY - 25, obs.width, 20);
+      } else if (obs.type === "bar") {
+        ctx.fillRect(obs.x - obs.width/2, groundY - 78, obs.width, 10);
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+        ctx.strokeRect(obs.x - obs.width/2, groundY - 78, obs.width, 10);
+      }
+    };
+    // ===== Логика/физика =====
+    const playerYByState = () => {
+      let y = groundY;
+      if (player.state === "jump") {
+        const t = Math.min(1, player.jumpT);
+        y -= Math.sin(Math.PI * t) * JUMP_HEIGHT;
+      } else if (player.state === "duck") {
+        y += 10;
+      }
+      return y;
+    };
+    const playerAABB = (x, y) => {
+      const width = 70;
+      const height = player.state === "duck" ? 45 : 70;
+      return { x: x - width/2, y: y - height, w: width, h: height };
+    };
+    const collideRectRect = (a, b) =>
+      a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    const checkCollision = (px, py, obs) => {
+      const a = playerAABB(px, py);
+      if (obs.type === "gap") {
+        const inGapX = (px > obs.x - obs.width/2) && (px < obs.x + obs.width/2);
+        if (inGapX && player.state !== "jump") return true;
+      } else if (obs.type === "box") {
+        const b = { x: obs.x - obs.width/2, y: groundY - 25, w: obs.width, h: 20 };
+        if (collideRectRect(a, b)) return true;
+      } else if (obs.type === "bar") {
+        const b = { x: obs.x - obs.width/2, y: groundY - 78, w: obs.width, h: 10 };
+        if (collideRectRect(a, b)) return true;
+      }
+      return false;
+    };
+    const loop = (ts) => {
+      const w = canvas.value.width = window.innerWidth;
+      const h = canvas.value.height = window.innerHeight;
+      groundY = h - 110;
+      const dt = Math.max(0.001, (ts - lastTs) / 1000);
+      lastTs = ts;
+      const elapsed = ts - startTs;
+      const levelNow = Math.floor(elapsed / SPEED_INCREASE_EVERY_MS);
+      if (levelNow > speedLevel) { speedLevel = levelNow; speed += 0.75; }
+      ctx.clearRect(0,0,w,h);
+      drawBackground(w, h);
+      const px = w * 0.28;
+      if (player.state === "jump") {
+        player.jumpT += dt / JUMP_DURATION;
+        if (player.jumpT >= 1) { player.jumpT = 0; player.state = "ride"; }
+      }
+      if (player.state === "duck") {
+        const aheadBar = obstacles.find(o => o.type === "bar" && o.x >= px - 10 && o.x - px < 160);
+        if (aheadBar) player.duckUntil = Math.max(player.duckUntil, performance.now() + 240);
+        if (performance.now() >= player.duckUntil) player.state = "ride";
+      }
+      const py = playerYByState();
+      drawPlayer(px, py);
+      for (let i=0; i<obstacles.length; i++) {
+        const obs = obstacles[i];
+        obs.x -= speed;
+        drawObstacle(obs);
+        if (checkCollision(px, py, obs)) { endGame(); return; }
+      }
+      obstacles = obstacles.filter(o => o.x > -80);
+      distance += speed * dt * 8.5;
+      score.value = Math.max(0, Math.floor(distance));
+      if (gameState.value === "play") rafId = requestAnimationFrame(loop);
+    };
+    // ===== Управление =====
+    const onKeyDown = (e) => {
+      if (gameState.value !== "play") return;
+      if (e.key === "ArrowUp" && player.state === "ride") { player.state = "jump"; player.jumpT = 0; }
+      if (e.key === "ArrowDown" && player.state === "ride") { player.state = "duck"; player.duckUntil = performance.now() + DUCK_DURATION_MS; }
+    };
+    const onTouchStart = (e) => {
+      if (gameState.value !== "play") return;
+      if (e.cancelable) e.preventDefault();
+      const t = e.touches[0];
+      touchStartX = t.clientX; touchStartY = t.clientY;
+      touchActive = true; gestureUsed = false;
+    };
+    const onTouchMove = (e) => {
+      if (gameState.value !== "play") return;
+      if (e.cancelable) e.preventDefault();
+      if (!touchActive || gestureUsed) return;
+      const t = e.touches[0];
+      const dx = t.clientX - touchStartX;
+      const dy = t.clientY - touchStartY;
+      const absX = Math.abs(dx), absY = Math.abs(dy);
+      const TH = 18;
+      if (absY > absX && absY > TH) {
+        if (dy < -TH && player.state === "ride") { player.state = "jump"; player.jumpT = 0; gestureUsed = true; }
+        else if (dy > TH && player.state === "ride") { player.state = "duck"; player.duckUntil = performance.now() + DUCK_DURATION_MS; gestureUsed = true; }
+      }
+    };
+    const onTouchEnd = (e) => {
+      if (e.cancelable) e.preventDefault();
+      touchActive = false; gestureUsed = false;
+    };
+    onMounted(() => {
+      ctx = canvas.value.getContext("2d");
+      const opts = { passive: false };
+      window.addEventListener("keydown", onKeyDown);
+      canvas.value.addEventListener("touchstart", onTouchStart, opts);
+      canvas.value.addEventListener("touchmove", onTouchMove, opts);
+      canvas.value.addEventListener("touchend", onTouchEnd, opts);
+    });
+    onBeforeUnmount(() => {
+      window.removeEventListener("keydown", onKeyDown);
+      canvas.value.removeEventListener("touchstart", onTouchStart);
+      canvas.value.removeEventListener("touchmove", onTouchMove);
+      canvas.value.removeEventListener("touchend", onTouchEnd);
+      cancelAnimationFrame(rafId);
+      clearTimeout(obstacleTimerId);
+    });
+    return { gameState, score, finalScore, startGame, canvas };
+  },
+  template: `
+    <div style="width:100%;height:100%;position:relative;">
+      <canvas ref="canvas"></canvas>
+      <div v-if="gameState==='start'">
+        <button class="ui-button start-btn" @click="startGame">Играть</button>
+      </div>
+      <div v-if="gameState==='play'" class="score-display">Очки: {{ score }}</div>
+      <div v-if="gameState==='end'">
+        <div class="score-display">Ты проехал {{ finalScore }} метров!</div>
+        <button class="ui-button restart-btn" @click="startGame">Играть снова</button>
+      </div>
+    </div>
+  `
+}).mount("#app");
+</script>
+</body>
+</html>
