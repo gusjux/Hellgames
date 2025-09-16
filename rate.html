@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Top Scoot — рейтинги трюковых самокатёров</title>
+<link rel="preconnect" href="https://unpkg.com">
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+<style>
+  :root {
+    --brand-red:#E53935;
+    --bg:#0e0e10;
+    --card:#151517;
+    --text:#fff;
+    --muted:#bdbdbd;
+  }
+  body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0e0e10; color:#fff; }
+  header.site { position:sticky; top:0; z-index:10; background:#121214; border-bottom:1px solid #242428; }
+  .wrap { max-width:1100px; margin:0 auto; padding:14px 16px; }
+  a { color: var(--brand-red); text-decoration:none; }
+  .brand { font-weight:800; letter-spacing:.5px; color:#fff; }
+  nav a { margin-right:14px; }
+  .hero { background:#121214; border-bottom:1px solid #242428; }
+  .card { background:#151517; border:1px solid #242428; border-radius:10px; padding:16px; }
+  .muted { color:var(--muted); }
+  .grid { display:grid; gap:16px; }
+  @media(min-width: 900px){ .grid.cols-2{ grid-template-columns:1fr 1fr;} }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #2a2a2f; font-size:12px; color:#ddd; }
+  .badge { padding:2px 8px; border-radius:6px; font-size:12px; }
+  .badge.nov { background:#333; }
+  .badge.am { background:#1e3a8a; }
+  .badge.pro { background:#7f1d1d; }
+  .tag { font-size:12px; border:1px solid #2a2a2f; padding:2px 8px; border-radius:6px; color:#ddd; }
+  .el-table { --el-text-color-regular:#e5e7eb; --el-table-border-color:#2a2a2f; }
+  .el-input__inner, .el-select .el-input__inner, .el-textarea__inner, .el-input__wrapper { background:#1b1b1e; color:#fff; }
+  .el-dialog, .el-message-box { background:#151517; color:#fff; }
+  .el-button.is-plain { background:#1b1b1e; }
+  footer.site { margin-top:40px; border-top:1px solid #242428; }
+  .small { font-size:12px; }
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap" style="display:flex;align-items:center;gap:16px;justify-content:space-between">
+    <div><router-link to="/" class="brand">TOP SCOOT</router-link></div>
+    <nav>
+      <router-link to="/rating">Рейтинг</router-link>
+      <router-link to="/events">Турниры</router-link>
+      <router-link to="/about">Как работает</router-link>
+      <router-link to="/rules">Правила</router-link>
+      <router-link to="/contact">Контакты</router-link>
+      <router-link to="/admin" style="margin-left:10px" class="pill">Админка</router-link>
+    </nav>
+  </div>
+</header>
+
+<div id="app" class="wrap" style="padding:18px 16px 40px">
+  <router-view />
+</div>
+
+<footer class="site">
+  <div class="wrap small muted">© 2025 Top Scoot — topscoot.ru · MVP. Цвета: ч/б/красный. Данные хранятся локально в вашем браузере (localStorage).</div>
+</footer>
+
+<!-- Vue / Router / Element Plus / dayjs / PapaParse -->
+<script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/vue-router@4.4.3/dist/vue-router.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script src="https://unpkg.com/dayjs@1.11.13/dayjs.min.js"></script>
+<script src="https://unpkg.com/dayjs@1.11.13/plugin/customParseFormat.js"></script>
+<script>dayjs.extend(dayjs_plugin_customParseFormat);</script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+<script>
+/** ===== Simple in-browser "DB" (localStorage) ===== */
+const LS_KEY = 'topscoot_db_v1';
+const defaultDB = {
+  users: [
+    { id: 1, email:'admin@topscoot.ru', password:'admin', role:'admin', created_at:Date.now(), last_login_at:null },
+    { id: 2, email:'editor@topscoot.ru', password:'editor', role:'editor', created_at:Date.now(), last_login_at:null },
+  ],
+  riders: [
+    // sample
+    { id:1, nickname:'vasya', fullname:'Василий Петров', city:'Москва', birthdate:'2012-04-10', style:'street', level:'novice', photo_url:'', socials_json:'', email:'' },
+    { id:2, nickname:'masha', fullname:'Мария Иванова', city:'СПб', birthdate:'2009-09-09', style:'park', level:'amateur', photo_url:'', socials_json:'', email:'' },
+  ],
+  events: [
+    // sample draft/published
+    { id:1, name:'Moscow Local Jam', date_start:'2025-08-12', date_end:null, city:'Москва',
+      level:'local', participants_count:52, style:'street', has_best_trick:true,
+      source_url:'', organizer_contact:'', status:'published', created_at:Date.now(), updated_at:Date.now() },
+  ],
+  results: [
+    // event 1 results for rider 1
+    { id:1, event_id:1, rider_id:1, place:1, is_finalist:true, is_participant:false, points:0, created_at:Date.now() },
+    { id:2, event_id:1, rider_id:2, place:7, is_finalist:true, is_participant:false, points:0, created_at:Date.now() },
+  ],
+  audit: [],
+  submissions: [] // contact form “submit tournament”
+};
+
+function loadDB(){
+  const raw = localStorage.getItem(LS_KEY);
+  if(!raw){
+    localStorage.setItem(LS_KEY, JSON.stringify(defaultDB));
+    return JSON.parse(JSON.stringify(defaultDB));
+  }
+  try { return JSON.parse(raw); } catch(e){ console.warn(e); localStorage.setItem(LS_KEY, JSON.stringify(defaultDB)); return JSON.parse(JSON.stringify(defaultDB)); }
+}
+function saveDB(db){ localStorage.setItem(LS_KEY, JSON.stringify(db)); }
+
+/** ===== Core rating logic (per your spec) ===== */
+const POINTS_TABLE = {
+  international: {win:400, second:300, third:220, finalist:100, participant:20},
+  national:      {win:300, second:220, third:160, finalist:80,  participant:15},
+  regional:      {win:200, second:140, third:100, finalist:50,  participant:10},
+  local:         {win:120, second:80,  third:60,  finalist:30,  participant:5}
+};
+const LEVELS = ['local','regional','national','international'];
+const AGE_MIN=7, AGE_MAX=25;
+const SEASON_DAYS = 90;
+const SEASON_CAP = 1000;
+
+function bonusByParticipants(n){
+  if(!n || n<=30) return 1;
+  if(n>60) return 1.2;
+  return 1.1;
+}
+function basePointsBy(eventLevel, place, isFinalist, isParticipant){
+  const tbl = POINTS_TABLE[eventLevel] || POINTS_TABLE.local;
+  if(place===1) return tbl.win;
+  if(place===2) return tbl.second;
+  if(place===3) return tbl.third;
+  if(isFinalist) return tbl.finalist;
+  if(isParticipant) return tbl.participant;
+  return 0;
+}
+function computeResultPoints(event, result){
+  const base = basePointsBy(event.level, result.place, result.is_finalist, result.is_participant);
+  const mult = bonusByParticipants(event.participants_count || 0);
+  // round to int
+  return Math.round(base * mult);
+}
+function inSeason(dateStr){
+  const d = dayjs(dateStr, ['YYYY-MM-DD','YYYY/MM/DD']);
+  const now = dayjs();
+  return d.isAfter(now.subtract(SEASON_DAYS, 'day'));
+}
+function ageFromBirth(birth){
+  if(!birth) return null;
+  const b = dayjs(birth, ['YYYY-MM-DD','DD.MM.YYYY']);
+  if(!b.isValid()) return null;
+  const now = dayjs();
+  let age = now.diff(b, 'year');
+  return age;
+}
+function classifyLevel(riderId, db){
+  // Auto classification proposal:
+  // Novice: <150 pts in season AND <2 top-8 (local/regional).
+  // Amateur: 150–499 pts season OR >=2 top-8 (local/reg).
+  // Pro: >=500 pts season OR top-8 (national/international).
+  const pts = seasonPointsForRider(riderId, db);
+  const riderResults = db.results.filter(r=>r.rider_id===riderId)
+    .map(r=>({r, ev: db.events.find(e=>e.id===r.event_id)}))
+    .filter(x=>x.ev && x.ev.status==='published' && inSeason(x.ev.date_start));
+  let top8LocalReg = 0, top8NatInt = 0;
+  riderResults.forEach(x=>{
+    if(x.r.place && x.r.place<=8){
+      if(x.ev.level==='local' || x.ev.level==='regional') top8LocalReg++;
+      if(x.ev.level==='national' || x.ev.level==='international') top8NatInt++;
+    }
+  });
+  if (pts>=500 || top8NatInt>=1) return 'pro';
+  if ((pts>=150 && pts<=499) || top8LocalReg>=2) return 'amateur';
+  return 'novice';
+}
+function seasonPointsForRider(riderId, db){
+  const items = db.results.map(r=>({r, ev: db.events.find(e=>e.id===r.event_id)}))
+    .filter(x=>x.ev && x.ev.status==='published' && inSeason(x.ev.date_start) && x.r.rider_id===riderId);
+  const sum = items.reduce((acc, x)=> acc + (x.r.points||0), 0);
+  return Math.min(SEASON_CAP, sum);
+}
+function recalcAllPoints(db){
+  // recompute points for all results according to event & table
+  db.results.forEach(res=>{
+    const ev = db.events.find(e=>e.id===res.event_id);
+    if(!ev) return;
+    res.points = computeResultPoints(ev, {
+      place:res.place||0,
+      is_finalist: !!res.is_finalist,
+      is_participant: !!res.is_participant
+    });
+  });
+  saveDB(db);
+}
+
+/** ===== Vue App ===== */
+const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
+const router = VueRouter.createRouter({
+  history: VueRouter.createWebHashHistory(),
+  routes: []
+});
+
+// Global store
+const store = reactive({
+  db: loadDB(),
+  me: null, // logged admin/editor
+  filters: {
+    city: '',
+    level: '',
+    style: '',
+    ageMin: AGE_MIN,
+    ageMax: AGE_MAX,
+    allAges: false
+  },
+  recalc(){ recalcAllPoints(this.db); },
+  login(email, password){
+    const u = this.db.users.find(u=>u.email.toLowerCase()===email.toLowerCase() && u.password===password);
+    if(u){ this.me = {id:u.id,email:u.email,role:u.role}; u.last_login_at=Date.now(); saveDB(this.db); return true; }
+    return false;
+  },
+  logout(){ this.me=null; },
+  addAudit(entry){ this.db.audit.push({id:Date.now(), ...entry, created_at:Date.now()}); saveDB(this.db); },
+  upsertRider(r){
+    if(!r.id){ r.id = (Math.max(0,...this.db.riders.map(x=>x.id))+1); this.db.riders.push(r); }
+    else {
+      const i = this.db.riders.findIndex(x=>x.id===r.id);
+      if(i>=0) this.db.riders[i]=r;
+    }
+    saveDB(this.db);
+  },
+  upsertEvent(e){
+    if(!e.id){ e.id = (Math.max(0,...this.db.events.map(x=>x.id))+1); e.created_at=Date.now(); e.updated_at=Date.now(); this.db.events.push(e); }
+    else {
+      const i = this.db.events.findIndex(x=>x.id===e.id);
+      if(i>=0){ e.updated_at=Date.now(); this.db.events[i]=e; }
+    }
+    saveDB(this.db);
+  },
+  removeEvent(id){
+    this.db.events = this.db.events.filter(e=>e.id!==id);
+    this.db.results = this.db.results.filter(r=>r.event_id!==id);
+    saveDB(this.db);
+  },
+  addResults(rows){
+    // rows: array of normalized result objects: {event, rider, place, is_finalist, is_participant}
+    rows.forEach(row=>{
+      const ev = row.event; const rider = row.rider;
+      // ensure rider in DB:
+      let r = this.db.riders.find(x=>x.nickname.toLowerCase() === rider.nickname.toLowerCase());
+      if(!r){
+        r = {
+          id: (Math.max(0,...this.db.riders.map(x=>x.id))+1),
+          nickname: rider.nickname, fullname: rider.fullname||'', city: rider.city||'',
+          birthdate: rider.birthdate||'', style: rider.style||'universal', level: rider.level||'novice',
+          photo_url:'', socials_json:'', email:''
+        };
+        this.db.riders.push(r);
+        this.addAudit({entity:'rider', entity_id:r.id, action:'create_from_csv', payload_json:JSON.stringify(r)});
+      }
+      const res = {
+        id: (Math.max(0,...this.db.results.map(x=>x.id))+1),
+        event_id: ev.id, rider_id: r.id,
+        place: row.place||null, is_finalist: !!row.is_finalist, is_participant: !!row.is_participant,
+        points: 0, created_at: Date.now()
+      };
+      res.points = computeResultPoints(ev, res);
+      // unique(event_id,rider_id): replace if exists
+      const exist = store.db.results.findIndex(x=>x.event_id===res.event_id && x.rider_id===res.rider_id);
+      if(exist>=0) store.db.results[exist]=res; else store.db.results.push(res);
+      store.addAudit({entity:'result', entity_id:res.id, action:'import', payload_json:JSON.stringify(res)});
+    });
+    saveDB(this.db);
+  }
+});
+
+/** ===== Components ===== */
+
+// Small helpers
+const LevelBadge = {
+  props:['level'],
+  template:`<span :class="cls" class="badge">{{label}}</span>`,
+  computed:{
+    label(){ return this.level==='pro'?'PRO': this.level==='amateur'?'Любитель':'Новичок'; },
+    cls(){ return this.level==='pro'?'badge pro' : this.level==='amateur'?'badge am':'badge nov'; }
+  }
+};
+const StyleTag = {
+  props:['style'],
+  template:`<span class="tag">{{label}}</span>`,
+  computed:{ label(){ return this.style==='street'?'Street': this.style==='park'?'Park':'Uni'; } }
+};
+
+// Home
+const Home = {
+  setup(){
+    const top = computed(()=>{
+      // compute season points for each rider
+      const rows = store.db.riders.map(r=>{
+        const pts = seasonPointsForRider(r.id, store.db);
+        return { r, pts };
+      }).filter(x=>{
+        if(!store.filters.allAges){
+          const age = ageFromBirth(x.r.birthdate);
+          if(age===null) return false;
+          if(age<AGE_MIN || age>AGE_MAX) return false;
+        }
+        return true;
+      }).sort((a,b)=>b.pts-a.pts).slice(0,10);
+      return rows;
+    });
+    return { top };
+  },
+  template:`
+  <section class="hero card">
+    <h1 style="margin:0 0 8px">Top Scoot — рейтинг трюковых самокатёров</h1>
+    <div class="muted">MVP · Скользящий сезон 90 дней · Обновление раз в месяц · Учитываются только соревнования</div>
+  </section>
+  <div style="height:14px"></div>
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <h3 style="margin:0">Топ-10 сезона</h3>
+      <router-link to="/rating" class="pill">Смотреть весь рейтинг</router-link>
+    </div>
+    <el-table :data="top" size="small" stripe>
+      <el-table-column label="#" type="index" width="50"></el-table-column>
+      <el-table-column label="Ник/Имя" min-width="200">
+        <template #default="{row}">
+          <router-link :to="'/r/'+row.r.id">{{row.r.nickname}}<span v-if="row.r.fullname"> — {{row.r.fullname}}</span></router-link>
+        </template>
+      </el-table-column>
+      <el-table-column prop="r.city" label="Город" width="140"></el-table-column>
+      <el-table-column label="Уровень" width="110">
+        <template #default="{row}"><LevelBadge :level="row.r.level" /></template>
+      </el-table-column>
+      <el-table-column label="Стиль" width="110">
+        <template #default="{row}"><StyleTag :style="row.r.style" /></template>
+      </el-table-column>
+      <el-table-column prop="pts" label="Очки (сезон)" width="140"></el-table-column>
+    </el-table>
+  </div>
+  `
+};
+
+// Rating page
+const Rating = {
+  components:{ LevelBadge, StyleTag },
+  setup(){
+    const page = ref(1), pageSize=ref(50);
+    const city=ref(store.filters.city), level=ref(store.filters.level), style=ref(store.filters.style);
+    const allAges=ref(store.filters.allAges);
+    const ageRange=ref([store.filters.ageMin, store.filters.ageMax]);
+
+    function filteredRows(){
+      return store.db.riders.map(r=>({ r, pts: seasonPointsForRider(r.id, store.db), age: ageFromBirth(r.birthdate) }))
+        .filter(x=>{
+          if(city.value && !String(x.r.city||'').toLowerCase().includes(city.value.toLowerCase())) return false;
+          if(level.value && x.r.level!==level.value) return false;
+          if(style.value && x.r.style!==style.value) return false;
+          if(!allAges.value){
+            if(x.age===null) return false;
+            if(x.age < ageRange.value[0] || x.age > ageRange.value[1]) return false;
+          }
+          return true;
+        }).sort((a,b)=>b.pts - a.pts);
+    }
+    const rows = computed(filteredRows);
+    const total = computed(()=>rows.value.length);
+    const pageRows = computed(()=> rows.value.slice((page.value-1)*pageSize.value, page.value*pageSize.value));
+    function applyFilters(){
+      store.filters.city = city.value; store.filters.level=level.value; store.filters.style=style.value;
+      store.filters.allAges = allAges.value; store.filters.ageMin=ageRange.value[0]; store.filters.ageMax=ageRange.value[1];
+    }
+    watch([city, level, style, allAges, ageRange], applyFilters);
+
+    return { rows, total, pageRows, page, pageSize, city, level, style, ageRange, allAges };
+  },
+  template:`
+  <div class="card">
+    <h2 style="margin:0 0 10px">Рейтинг</h2>
+    <div class="grid cols-2" style="margin-bottom:12px">
+      <div class="grid" style="grid-template-columns:1fr 1fr; gap:10px">
+        <el-input v-model="city" placeholder="Город"></el-input>
+        <el-select v-model="level" placeholder="Уровень">
+          <el-option label="Все" value=""></el-option>
+          <el-option label="Новичок" value="novice"></el-option>
+          <el-option label="Любитель" value="amateur"></el-option>
+          <el-option label="PRO" value="pro"></el-option>
+        </el-select>
+        <el-select v-model="style" placeholder="Стиль">
+          <el-option label="Все" value=""></el-option>
+          <el-option label="Street" value="street"></el-option>
+          <el-option label="Park" value="park"></el-option>
+          <el-option label="Universal" value="universal"></el-option>
+        </el-select>
+        <div>
+          <div class="small muted" style="margin-bottom:4px">Возрастной диапазон (по умолчанию 7–25)</div>
+          <el-slider v-model="ageRange" range :min="7" :max="25" :disabled="allAges" />
+          <el-checkbox v-model="allAges" label="Показывать всех (без ограничения возраста)"></el-checkbox>
+        </div>
+      </div>
+    </div>
+    <el-table :data="pageRows" stripe>
+      <el-table-column label="#" type="index" width="50"></el-table-column>
+      <el-table-column label="Ник/Имя" min-width="220">
+        <template #default="{row}">
+          <router-link :to="'/r/'+row.r.id">{{row.r.nickname}}<span v-if="row.r.fullname"> — {{row.r.fullname}}</span></router-link>
+        </template>
+      </el-table-column>
+      <el-table-column prop="r.city" label="Город" width="140"></el-table-column>
+      <el-table-column label="Возраст" width="90">
+        <template #default="{row}">{{row.age ?? '—'}}</template>
+      </el-table-column>
+      <el-table-column label="Уровень" width="110">
+        <template #default="{row}"><LevelBadge :level="row.r.level" /></template>
+      </el-table-column>
+      <el-table-column label="Стиль" width="110">
+        <template #default="{row}"><StyleTag :style="row.r.style" /></template>
+      </el-table-column>
+      <el-table-column prop="pts" label="Очки (сезон)" width="140"></el-table-column>
+    </el-table>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :page-sizes="[25,50,100]"
+        layout="total, sizes, prev, pager, next"
+        :total="total"
+      />
+    </div>
+  </div>`
+};
+
+// Rider page
+const Rider = {
+  components:{ LevelBadge, StyleTag },
+  setup(props,{attrs}){
+    const id = Number(location.hash.split('/r/')[1]);
+    const rider = computed(()=> store.db.riders.find(r=>r.id===id));
+    const seasonPts = computed(()=> rider.value ? seasonPointsForRider(rider.value.id, store.db) : 0);
+    const results = computed(()=>{
+      if(!rider.value) return [];
+      return store.db.results
+        .filter(r=>r.rider_id===rider.value.id)
+        .map(r=>({r, ev: store.db.events.find(e=>e.id===r.event_id)}))
+        .filter(x=>x.ev && x.ev.status==='published' && inSeason(x.ev.date_start))
+        .sort((a,b)=> dayjs(b.ev.date_start).valueOf() - dayjs(a.ev.date_start).valueOf());
+    });
+    const age = computed(()=> rider.value ? ageFromBirth(rider.value.birthdate) : null);
+    return { rider, seasonPts, results, age };
+  },
+  template:`
+  <div v-if="rider" class="grid cols-2">
+    <div class="card">
+      <h2 style="margin:0 0 8px">{{rider.nickname}}<span v-if="rider.fullname"> — {{rider.fullname}}</span></h2>
+      <div class="muted" style="margin-bottom:10px">{{rider.city}} • Возраст: {{age ?? '—'}} • <LevelBadge :level="rider.level" /> • <StyleTag :style="rider.style" /></div>
+      <div class="pill">Очки сезона: {{seasonPts}}</div>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 10px">Результаты за сезон</h3>
+      <el-table :data="results" size="small" stripe>
+        <el-table-column label="Дата" width="110">
+          <template #default="{row}">{{row.ev.date_start}}</template>
+        </el-table-column>
+        <el-table-column label="Турнир" min-width="200">
+          <template #default="{row}"><router-link :to="'/e/'+row.ev.id">{{row.ev.name}}</router-link></template>
+        </el-table-column>
+        <el-table-column label="Уровень" width="120">
+          <template #default="{row}">{{row.ev.level}}</template>
+        </el-table-column>
+        <el-table-column label="Место" width="90">
+          <template #default="{row}">{{row.r.place ?? (row.r.is_participant?'участник':'—')}}</template>
+        </el-table-column>
+        <el-table-column label="Очки" width="100">
+          <template #default="{row}">{{row.r.points}}</template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+  <div v-else class="card">Райдер не найден.</div>
+  `
+};
+
+// Events list
+const Events = {
+  setup(){
+    const level=ref('');
+    const city=ref('');
+    const rows = computed(()=>{
+      return store.db.events
+        .slice()
+        .sort((a,b)=> dayjs(b.date_start).valueOf() - dayjs(a.date_start).valueOf())
+        .filter(e=>{
+          if(level.value && e.level!==level.value) return false;
+          if(city.value && !String(e.city||'').toLowerCase().includes(city.value.toLowerCase())) return false;
+          return true;
+        });
+    });
+    return { rows, level, city };
+  },
+  template:`
+  <div class="card">
+    <h2 style="margin:0 0 10px">Турниры</h2>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <el-input v-model="city" placeholder="Город"></el-input>
+      <el-select v-model="level" placeholder="Уровень">
+        <el-option label="Все" value=""></el-option>
+        <el-option label="Local" value="local"></el-option>
+        <el-option label="Regional" value="regional"></el-option>
+        <el-option label="National" value="national"></el-option>
+        <el-option label="International" value="international"></el-option>
+      </el-select>
+    </div>
+    <el-table :data="rows" stripe>
+      <el-table-column label="Дата" width="120" prop="date_start"></el-table-column>
+      <el-table-column label="Название" min-width="240">
+        <template #default="{row}"><router-link :to="'/e/'+row.id">{{row.name}}</router-link></template>
+      </el-table-column>
+      <el-table-column label="Город" width="140" prop="city"></el-table-column>
+      <el-table-column label="Уровень" width="140" prop="level"></el-table-column>
+      <el-table-column label="Участников" width="120" prop="participants_count"></el-table-column>
+      <el-table-column label="Статус" width="120" prop="status"></el-table-column>
+    </el-table>
+  </div>
+  `
+};
+
+// Event page
+const EventPage = {
+  setup(){
+    const id = Number(location.hash.split('/e/')[1]);
+    const ev = computed(()=> store.db.events.find(e=>e.id===id));
+    const results = computed(()=>{
+      const arr = store.db.results.filter(r=>r.event_id===id)
+        .map(r=>({r, rider: store.db.riders.find(x=>x.id===r.rider_id)}))
+        .sort((a,b)=>{
+          if((a.r.place||999)!==(b.r.place||999)) return (a.r.place||999) - (b.r.place||999);
+          return (b.r.points||0) - (a.r.points||0);
+        });
+      return arr;
+    });
+    return { ev, results };
+  },
+  template:`
+  <div v-if="ev" class="card">
+    <h2 style="margin:0 0 6px">{{ev.name}}</h2>
+    <div class="muted" style="margin-bottom:12px">
+      {{ev.date_start}} • {{ev.city}} • уровень: {{ev.level}} • участников: {{ev.participants_count||'—'}} • статус: {{ev.status}}
+      <span v-if="ev.source_url"> • <a :href="ev.source_url" target="_blank">источник</a></span>
+    </div>
+    <h3 style="margin:0 0 8px">Итоги</h3>
+    <el-table :data="results" stripe>
+      <el-table-column label="#" type="index" width="50"></el-table-column>
+      <el-table-column label="Место" width="90"><template #default="{row}">{{row.r.place ?? (row.r.is_participant?'участник':'—')}}</template></el-table-column>
+      <el-table-column label="Райдер" min-width="220">
+        <template #default="{row}"><router-link :to="'/r/'+row.rider.id">{{row.rider.nickname}}<span v-if="row.rider.fullname"> — {{row.rider.fullname}}</span></router-link></template>
+      </el-table-column>
+      <el-table-column label="Город" width="140" prop="rider.city"></el-table-column>
+      <el-table-column label="Очки" width="100" prop="r.points"></el-table-column>
+    </el-table>
+  </div>
+  <div v-else class="card">Турнир не найден.</div>
+  `
+};
+
+// About / Rules / Contact
+const About = {
+  template:`
+  <div class="card">
+    <h2 style="margin:0 0 10px">Как работает рейтинг</h2>
+    <p>Учитываются только соревнования (официальные и неофициальные с протоколом). Скользящий сезон: последние 90 дней. Обновление — раз в месяц.</p>
+    <p><b>Очки за места:</b></p>
+    <el-table :data="[
+      {lvl:'International', a:'400/300/220', f:'100', p:'20'},
+      {lvl:'National', a:'300/220/160', f:'80', p:'15'},
+      {lvl:'Regional', a:'200/140/100', f:'50', p:'10'},
+      {lvl:'Local', a:'120/80/60', f:'30', p:'5'}
+    ]" size="small" stripe>
+      <el-table-column prop="lvl" label="Уровень" width="150"></el-table-column>
+      <el-table-column prop="a" label="1/2/3" width="150"></el-table-column>
+      <el-table-column prop="f" label="Финалист" width="120"></el-table-column>
+      <el-table-column prop="p" label="Участник" width="120"></el-table-column>
+    </el-table>
+    <p class="small muted" style="margin-top:8px">Бонус за размер поля: >30 участников = +10%, >60 = +20%. Сезонный кэп: 1000 очков на райдера.</p>
+  </div>
+  `
+};
+const Rules = {
+  template:`<div class="card"><h2 style="margin:0 0 10px">Правила и политика</h2>
+  <p>Мы считаем только опубликованные протоколы. Администратор может исправить ошибки. Апелляции — через контакты.</p>
+  <p>Фото публикуются после модерации. Персональные данные обрабатываются согласно политике конфиденциальности.</p></div>`
+};
+const Contact = {
+  setup(){
+    const form = reactive({ name:'', email:'', message:'' });
+    function send(){
+      store.db.submissions.push({ id:Date.now(), ...form, created_at:Date.now() });
+      saveDB(store.db);
+      ElMessage.success('Заявка отправлена (сохранена локально)');
+      form.name='';form.email='';form.message='';
+    }
+    return { form, send };
+  },
+  template:`
+  <div class="card">
+    <h2 style="margin:0 0 10px">Контакты / Подать турнир</h2>
+    <el-form label-width="140px">
+      <el-form-item label="Ваше имя"><el-input v-model="form.name" /></el-form-item>
+      <el-form-item label="Email/Телега"><el-input v-model="form.email" /></el-form-item>
+      <el-form-item label="Сообщение"><el-input type="textarea" :rows="4" v-model="form.message" placeholder="Коротко опишите турнир и приложите ссылку на пост/док" /></el-form-item>
+      <el-form-item><el-button type="primary" @click="send">Отправить</el-button></el-form-item>
+    </el-form>
+    <div class="small muted">MVP: заявка сохраняется локально (localStorage).</div>
+  </div>`
+};
+
+// Admin
+const AdminLogin = {
+  setup(){
+    const email=ref('admin@topscoot.ru'), password=ref('admin');
+    function doLogin(){
+      if(store.login(email.value, password.value)){ ElMessage.success('Вход выполнен'); router.push('/admin'); }
+      else ElMessage.error('Неверные данные');
+    }
+    return { email, password, doLogin, me:store.me };
+  },
+  template:`
+  <div class="card" v-if="!me">
+    <h2 style="margin:0 0 10px">Вход в админку</h2>
+    <el-form label-width="120px">
+      <el-form-item label="Email"><el-input v-model="email" /></el-form-item>
+      <el-form-item label="Пароль"><el-input v-model="password" type="password" show-password /></el-form-item>
+      <el-form-item><el-button type="primary" @click="doLogin">Войти</el-button></el-form-item>
+    </el-form>
+    <div class="small muted">Демо: admin@topscoot.ru / admin · editor@topscoot.ru / editor</div>
+  </div>
+  <div v-else class="card">Вы уже вошли. Перейдите в <router-link to="/admin">панель</router-link>.</div>
+  `
+};
+
+const AdminPanel = {
+  setup(){
+    const tab=ref('dashboard');
+    return { tab, me:store.me };
+  },
+  template:`
+  <div v-if="!me"><router-link to="/admin/login" class="pill">Требуется вход</router-link></div>
+  <div v-else class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2 style="margin:0">Админка</h2>
+      <div><span class="muted small">Вы: {{me.email}} ({{me.role}})</span> <el-button size="small" @click="store.logout();$router.push('/')">Выйти</el-button></div>
+    </div>
+    <el-tabs v-model="tab" style="margin-top:12px">
+      <el-tab-pane label="Дашборд" name="dashboard"><AdminDashboard /></el-tab-pane>
+      <el-tab-pane label="Райдеры" name="riders"><AdminRiders /></el-tab-pane>
+      <el-tab-pane label="Турниры" name="events"><AdminEvents /></el-tab-pane>
+      <el-tab-pane label="Результаты / CSV" name="results"><AdminResults /></el-tab-pane>
+      <el-tab-pane label="Аудит" name="audit"><AdminAudit /></el-tab-pane>
+    </el-tabs>
+  </div>
+  `
+};
+
+const AdminDashboard = {
+  setup(){
+    const stats = computed(()=>({
+      riders: store.db.riders.length,
+      events: store.db.events.length,
+      results: store.db.results.length
+    }));
+    function recalc(){ store.recalc(); ElMessage.success('Пересчитано'); }
+    return { stats, recalc };
+  },
+  template:`
+  <div class="grid cols-2">
+    <div class="card"><h3 style="margin:0 0 8px">Счётчики</h3>
+      <div>Райдеров: <b>{{stats.riders}}</b></div>
+      <div>Турниров: <b>{{stats.events}}</b></div>
+      <div>Результатов: <b>{{stats.results}}</b></div>
+      <div style="margin-top:10px"><el-button type="primary" @click="recalc">Пересчитать очки</el-button></div>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Памятка</h3>
+      <div class="small muted">Импортируйте CSV с результатами, опубликуйте турнир (status: published) — очки посчитаются автоматически. Сезон — последние 90 дней, кэп 1000.</div>
+    </div>
+  </div>
+  `
+};
+
+const AdminRiders = {
+  setup(){
+    const dialog=ref(false);
+    const form=reactive({ id:null, nickname:'', fullname:'', city:'', birthdate:'', style:'universal', level:'novice', photo_url:'', socials_json:'', email:'' });
+    const rows = computed(()=> store.db.riders.slice().sort((a,b)=> (a.nickname||'').localeCompare(b.nickname||'')));
+    function openNew(){ Object.assign(form,{id:null,nickname:'',fullname:'',city:'',birthdate:'',style:'universal',level:'novice',photo_url:'',socials_json:'',email:''}); dialog.value=true; }
+    function editRow(r){ Object.assign(form, JSON.parse(JSON.stringify(r))); dialog.value=true; }
+    function save(){
+      if(!form.nickname || !form.city || !form.birthdate){ ElMessage.error('Заполните ник, город и дату рождения'); return; }
+      store.upsertRider(JSON.parse(JSON.stringify(form)));
+      ElMessage.success('Сохранено'); dialog.value=false;
+    }
+    function autoLevels(){
+      store.db.riders.forEach(r=>{ r.level = classifyLevel(r.id, store.db); });
+      saveDB(store.db); ElMessage.success('Уровни пересчитаны автоматически');
+    }
+    return { rows, dialog, form, openNew, editRow, save, autoLevels };
+  },
+  template:`
+  <div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <el-button type="primary" @click="openNew">Добавить райдера</el-button>
+      <el-button @click="autoLevels">Авто-классификация уровней</el-button>
+    </div>
+    <el-table :data="rows" size="small" stripe>
+      <el-table-column prop="nickname" label="Ник" width="160"></el-table-column>
+      <el-table-column prop="fullname" label="Имя" min-width="200"></el-table-column>
+      <el-table-column prop="city" label="Город" width="140"></el-table-column>
+      <el-table-column label="Возраст" width="90">
+        <template #default="{row}">{{(ageFromBirth(row.birthdate)) ?? '—'}}</template>
+      </el-table-column>
+      <el-table-column label="Стиль" width="110" prop="style"></el-table-column>
+      <el-table-column label="Уровень" width="110" prop="level"></el-table-column>
+      <el-table-column label="Действия" width="140">
+        <template #default="{row}"><el-button size="small" @click="editRow(row)">Править</el-button></template>
+      </el-table-column>
+    </el-table>
+
+    <el-dialog v-model="dialog" title="Райдер">
+      <el-form label-width="130px">
+        <el-form-item label="Ник"><el-input v-model="form.nickname" /></el-form-item>
+        <el-form-item label="Имя"><el-input v-model="form.fullname" /></el-form-item>
+        <el-form-item label="Город"><el-input v-model="form.city" /></el-form-item>
+        <el-form-item label="Дата рождения (YYYY-MM-DD)"><el-input v-model="form.birthdate" /></el-form-item>
+        <el-form-item label="Стиль">
+          <el-select v-model="form.style">
+            <el-option label="Street" value="street"></el-option>
+            <el-option label="Park" value="park"></el-option>
+            <el-option label="Universal" value="universal"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Уровень">
+          <el-select v-model="form.level">
+            <el-option label="Новичок" value="novice"></el-option>
+            <el-option label="Любитель" value="amateur"></el-option>
+            <el-option label="PRO" value="pro"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Фото URL (опц.)"><el-input v-model="form.photo_url" /></el-form-item>
+        <el-form-item label="Соцсети JSON (опц.)"><el-input v-model="form.socials_json" /></el-form-item>
+        <el-form-item label="Email (опц.)"><el-input v-model="form.email" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialog=false">Отмена</el-button>
+        <el-button type="primary" @click="save">Сохранить</el-button>
+      </template>
+    </el-dialog>
+  </div>
+  `
+};
+
+const AdminEvents = {
+  setup(){
+    const dialog=ref(false);
+    const form=reactive({ id:null, name:'', date_start:'', date_end:'', city:'', level:'local', participants_count:0, style:'', has_best_trick:false, source_url:'', organizer_contact:'', status:'draft' });
+    const rows = computed(()=> store.db.events.slice().sort((a,b)=> dayjs(b.date_start).valueOf() - dayjs(a.date_start).valueOf()));
+    function openNew(){ Object.assign(form,{ id:null, name:'', date_start:'', date_end:'', city:'', level:'local', participants_count:0, style:'', has_best_trick:false, source_url:'', organizer_contact:'', status:'draft' }); dialog.value=true; }
+    function editRow(e){ Object.assign(form, JSON.parse(JSON.stringify(e))); dialog.value=true; }
+    function save(){
+      if(!form.name || !form.date_start || !form.city){ ElMessage.error('Заполните название, дату, город'); return; }
+      store.upsertEvent(JSON.parse(JSON.stringify(form)));
+      store.addAudit({entity:'event', entity_id:form.id, action: form.id?'update':'create', payload_json: JSON.stringify(form)});
+      ElMessage.success('Сохранено'); dialog.value=false;
+    }
+    function removeRow(e){
+      ElMessageBox.confirm('Удалить турнир и его результаты?','Подтвердите',{type:'warning'}).then(()=>{
+        store.removeEvent(e.id); ElMessage.success('Удалено');
+      }).catch(()=>{});
+    }
+    function publish(e){
+      e.status='published'; store.upsertEvent(e);
+      store.recalc(); ElMessage.success('Опубликовано и пересчитано');
+    }
+    return { rows, dialog, form, openNew, editRow, save, removeRow, publish };
+  },
+  template:`
+  <div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <el-button type="primary" @click="openNew">Добавить турнир</el-button>
+    </div>
+    <el-table :data="rows" size="small" stripe>
+      <el-table-column prop="date_start" label="Дата" width="110"></el-table-column>
+      <el-table-column prop="name" label="Название" min-width="220"></el-table-column>
+      <el-table-column prop="city" label="Город" width="140"></el-table-column>
+      <el-table-column prop="level" label="Уровень" width="130"></el-table-column>
+      <el-table-column prop="participants_count" label="Участников" width="120"></el-table-column>
+      <el-table-column prop="status" label="Статус" width="110"></el-table-column>
+      <el-table-column label="Действия" width="260">
+        <template #default="{row}">
+          <el-button size="small" @click="editRow(row)">Править</el-button>
+          <el-button size="small" type="danger" @click="removeRow(row)">Удалить</el-button>
+          <el-button size="small" type="success" @click="publish(row)" v-if="row.status!=='published'">Опубликовать</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-dialog v-model="dialog" title="Турнир">
+      <el-form label-width="160px">
+        <el-form-item label="Название"><el-input v-model="form.name" /></el-form-item>
+        <el-form-item label="Дата начала (YYYY-MM-DD)"><el-input v-model="form.date_start" /></el-form-item>
+        <el-form-item label="Дата конца (опц.)"><el-input v-model="form.date_end" /></el-form-item>
+        <el-form-item label="Город"><el-input v-model="form.city" /></el-form-item>
+        <el-form-item label="Уровень">
+          <el-select v-model="form.level">
+            <el-option value="local" label="Local"></el-option>
+            <el-option value="regional" label="Regional"></el-option>
+            <el-option value="national" label="National"></el-option>
+            <el-option value="international" label="International"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Кол-во участников"><el-input type="number" v-model.number="form.participants_count" /></el-form-item>
+        <el-form-item label="Стиль (опц.)">
+          <el-select v-model="form.style" clearable>
+            <el-option value="street" label="Street"></el-option>
+            <el-option value="park" label="Park"></el-option>
+            <el-option value="universal" label="Universal"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Best Trick?"><el-switch v-model="form.has_best_trick" /></el-form-item>
+        <el-form-item label="Источник URL"><el-input v-model="form.source_url" /></el-form-item>
+        <el-form-item label="Контакт организатора"><el-input v-model="form.organizer_contact" /></el-form-item>
+        <el-form-item label="Статус">
+          <el-select v-model="form.status">
+            <el-option value="draft" label="Черновик"></el-option>
+            <el-option value="published" label="Опубликован"></el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialog=false">Отмена</el-button>
+        <el-button type="primary" @click="save">Сохранить</el-button>
+      </template>
+    </el-dialog>
+  </div>
+  `
+};
+
+const AdminResults = {
+  setup(){
+    const selectedEventId = ref(null);
+    const preview = ref([]);
+    const csvText = ref('');
+    const template = `tournament_name,tournament_date,tournament_city,tournament_level,participants_count,tournament_style,place,is_finalist,is_participant,rider_nick,rider_fullname,rider_city,rider_birthdate(YYYY-MM-DD),rider_style,rider_level_override(optional)
+Moscow Local Jam,2025-10-12,Moscow,local,52,street,1,false,false,vasya,Vasily Petrov,Moscow,2012-04-10,street,
+`;
+    const events = computed(()=> store.db.events.slice().sort((a,b)=> dayjs(b.date_start).valueOf()-dayjs(a.date_start).valueOf()));
+
+    function parse(){
+      const res = Papa.parse(csvText.value.trim(), { header:true, skipEmptyLines:true });
+      if(res.errors?.length){ ElMessage.error('Ошибка CSV: '+res.errors[0].message); return; }
+      preview.value = res.data;
+      ElMessage.success('CSV разобран, строк: '+preview.value.length);
+    }
+    function commit(){
+      if(!selectedEventId.value){ ElMessage.error('Выберите турнир для привязки'); return; }
+      const ev = store.db.events.find(e=>e.id===Number(selectedEventId.value));
+      if(!ev){ ElMessage.error('Турнир не найден'); return; }
+      // normalize rows
+      const rows = preview.value.map(d=>{
+        // if CSV относится к другому турниру — игнорируем валидацию названия, но можно подсказать
+        const place = d.place? Number(d.place) : null;
+        let is_finalist = (String(d.is_finalist||'').toLowerCase()==='true');
+        if(place && place<=8) is_finalist = true;
+        const is_participant = String(d.is_participant||'').toLowerCase()==='true';
+        const rider = {
+          nickname: (d.rider_nick||'').trim(),
+          fullname: (d.rider_fullname||'').trim(),
+          city: (d.rider_city||'').trim(),
+          birthdate: (d['rider_birthdate(YYYY-MM-DD)']||'').trim(),
+          style: (d.rider_style||'universal').trim(),
+          level: (d.rider_level_override||'').trim() || undefined
+        };
+        if(!rider.nickname) rider.nickname = 'anon_'+Math.random().toString(36).slice(2,6);
+        return { event: ev, rider, place, is_finalist, is_participant };
+      });
+      store.addResults(rows);
+      ElMessage.success('Импортировано: '+rows.length+'. Очки посчитаны.');
+    }
+    function publishEvent(){
+      if(!selectedEventId.value){ ElMessage.error('Выберите турнир'); return; }
+      const ev = store.db.events.find(e=>e.id===Number(selectedEventId.value));
+      if(!ev){ ElMessage.error('Турнир не найден'); return; }
+      ev.status='published'; store.upsertEvent(ev);
+      store.recalc(); ElMessage.success('Турнир опубликован и пересчитан');
+    }
+    function recalc(){ store.recalc(); }
+    return { events, selectedEventId, preview, csvText, parse, commit, publishEvent, recalc, template };
+  },
+  template:`
+  <div class="grid cols-2">
+    <div class="card">
+      <h3 style="margin:0 0 8px">Импорт CSV результатов</h3>
+      <el-select v-model="selectedEventId" placeholder="Выберите турнир для привязки" style="width:100%;margin-bottom:8px">
+        <el-option v-for="e in events" :key="e.id" :label="e.date_start+' — '+e.name" :value="e.id"></el-option>
+      </el-select>
+      <el-input type="textarea" :rows="12" v-model="csvText" placeholder="Вставьте CSV по шаблону ниже"></el-input>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <el-button @click="parse">Предпросмотр</el-button>
+        <el-button type="primary" @click="commit">Загрузить</el-button>
+        <el-button type="success" @click="publishEvent">Опубликовать турнир</el-button>
+        <el-button @click="recalc">Пересчитать</el-button>
+      </div>
+      <div class="small muted" style="margin-top:8px">Шаблон CSV:</div>
+      <pre class="small" style="white-space:pre-wrap;background:#111;padding:8px;border-radius:8px;max-height:220px;overflow:auto">{{template}}</pre>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Предпросмотр</h3>
+      <el-table :data="preview" height="360" size="small" stripe v-if="preview.length">
+        <el-table-column prop="rider_nick" label="Ник" width="160"></el-table-column>
+        <el-table-column prop="place" label="Место" width="90"></el-table-column>
+        <el-table-column prop="is_finalist" label="Финалист" width="110"></el-table-column>
+        <el-table-column prop="is_participant" label="Участник" width="110"></el-table-column>
+        <el-table-column prop="tournament_level" label="Lvl" width="90"></el-table-column>
+        <el-table-column prop="participants_count" label="Участн." width="100"></el-table-column>
+      </el-table>
+      <div v-else class="muted small">Здесь появится предпросмотр данных после парсинга CSV.</div>
+    </div>
+  </div>
+  `
+};
+
+const AdminAudit = {
+  setup(){
+    const rows = computed(()=> store.db.audit.slice().reverse());
+    return { rows };
+  },
+  template:`
+  <div class="card">
+    <h3 style="margin:0 0 8px">Журнал изменений</h3>
+    <el-table :data="rows" size="small" stripe>
+      <el-table-column prop="created_at" label="Время" width="170">
+        <template #default="{row}">{{ new Date(row.created_at).toLocaleString() }}</template>
+      </el-table-column>
+      <el-table-column prop="entity" label="Сущность" width="120"></el-table-column>
+      <el-table-column prop="action" label="Действие" width="150"></el-table-column>
+      <el-table-column prop="entity_id" label="ID" width="90"></el-table-column>
+      <el-table-column prop="payload_json" label="Данные" min-width="400"></el-table-column>
+    </el-table>
+  </div>
+  `
+};
+
+// Routes
+router.addRoute({ path:'/', component: Home });
+router.addRoute({ path:'/rating', component: Rating });
+router.addRoute({ path:'/r/:id', component: Rider });
+router.addRoute({ path:'/events', component: Events });
+router.addRoute({ path:'/e/:id', component: EventPage });
+router.addRoute({ path:'/about', component: About });
+router.addRoute({ path:'/rules', component: Rules });
+router.addRoute({ path:'/contact', component: Contact });
+router.addRoute({ path:'/admin/login', component: AdminLogin });
+router.addRoute({ path:'/admin', component: AdminPanel });
+
+// Mount
+const app = createApp({
+  setup(){ onMounted(()=>{ store.recalc(); }); return { store }; }
+});
+app.use(router);
+app.use(ElementPlus);
+app.component('LevelBadge', LevelBadge);
+app.component('StyleTag', StyleTag);
+app.mount('#app');
+
+// Initial calc
+store.recalc();
+</script>
+</body>
+</html>
